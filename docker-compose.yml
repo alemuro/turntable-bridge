@@ -1,0 +1,16 @@
+services:
+  turntable-bridge:
+    build: .
+    container_name: turntable-bridge
+    restart: unless-stopped
+    # Host networking is required for Bluetooth stack communication & low-latency audio
+    network_mode: host
+    privileged: true
+    volumes:
+      # Host Bluetooth D-Bus socket & hardware dev nodes
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket
+      - /dev:/dev
+    environment:
+      - TURNTABLE_MAC=AD:60:17:9B:D5:AC
+      - ICECAST_SOURCE_PASSWORD=${ICECAST_SOURCE_PASSWORD:-hackme}
+      - ICECAST_ADMIN_PASSWORD=${ICECAST_ADMIN_PASSWORD:-hackme}
