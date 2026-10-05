@@ -41,6 +41,8 @@ echo "[+] Icecast2 running on port 8000"
 # 2. Start PulseAudio daemon
 pulseaudio --start --exit-idle-time=-1 --system=false
 pactl load-module module-switch-on-connect || true
+pactl load-module module-bluetooth-discover || true
+pactl load-module module-bluetooth-policy || true
 echo "[+] PulseAudio initialized"
 
 # 3. Start Bluetooth agent and autoconnect daemon if D-Bus socket is available
@@ -57,5 +59,6 @@ darkice -c /etc/darkice.cfg &
 echo "[+] DarkIce streamer active"
 
 # 5. Start Phonos API & Web Dashboard as main foreground process
-echo "[+] Phonos Status API & UI running on port 80"
+PORT="${PORT:-8080}"
+echo "[+] Phonos Status API & UI running on port ${PORT}"
 exec python3 /usr/local/bin/phonos-status-api.py

@@ -33,6 +33,6 @@ RUN chmod +x /usr/local/bin/phonos-status-api.py \
              /app/entrypoint.sh \
     && chown -R icecast2:icecast /etc/icecast2
 
-EXPOSE 80 8000
+EXPOSE 8080 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]

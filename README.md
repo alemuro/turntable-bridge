@@ -8,8 +8,8 @@
 
 - **Emparellament i Reconnexió Automàtica**: Detecta quan el tocadiscos s'encén i s'hi connecta immediatament sense intervenció.
 - **Emissió en Directe d'Alta Qualitat**: Codificació MP3 256kbps a `http://<ip>:8000/sonos.mp3`.
-- **Panell de Control & Dashboard Web**: Interfície moderna i accessible a `http://<ip>/` amb estat en temps real i animació de vinil.
-- **API REST & Swagger UI**: Documentació interactiva OpenAPI a `http://<ip>/docs` i endpoints de control a `/api`.
+- **Panell de Control & Dashboard Web**: Interfície moderna i accessible a `http://<ip>:8080/` amb estat en temps real i animació de vinil.
+- **API REST & Swagger UI**: Documentació interactiva OpenAPI a `http://<ip>:8080/docs` i endpoints de control a `/api`.
 - **Empaquetat per a Docker & Homelab**: Llesta per desplegar amb `docker compose`.
 
 ---
@@ -59,8 +59,8 @@ spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       # Programa el pod al node que tingui l'adaptador Bluetooth físic
-      # nodeSelector:
-      #   kubernetes.io/hostname: "nom-del-node-bluetooth"
+      nodeSelector:
+        kubernetes.io/hostname: "summer"
       containers:
         - name: turntable-bridge
           image: ghcr.io/alemuro/turntable-bridge:latest
@@ -68,6 +68,8 @@ spec:
           securityContext:
             privileged: true
           env:
+            - name: PORT
+              value: "8080"
             - name: TURNTABLE_MAC
               value: "AD:60:17:9B:D5:AC"
             - name: ICECAST_SOURCE_PASSWORD
@@ -98,7 +100,7 @@ spec:
 ```
 
 > [!NOTE]
-> Com que s'utilitza `hostNetwork: true`, els ports 80 (API i Dashboard Web) i 8000 (Stream Icecast) s'exposen directament a la IP del node del clúster.
+> Com que s'utilitza `hostNetwork: true`, els ports 8080 (API i Dashboard Web) i 8000 (Stream Icecast) s'exposen directament a la IP del node del clúster (sense entrar en conflicte amb el port 80 del reverse proxy/Ingress).
 
 ---
 
@@ -106,7 +108,9 @@ spec:
 
 | Variable | Descripció | Valor per defecte |
 |---|---|---|
+| `PORT` | Port del servidor web i API Phonos | `8080` |
 | `TURNTABLE_MAC` | Adreça MAC del tocadiscos Bluetooth | `AD:60:17:9B:D5:AC` |
+| `ICECAST_HOST` | Hostname/IP per a l'enllaç de streaming Icecast | IP de connexió del client |
 | `ICECAST_SOURCE_PASSWORD` | Contrasenya per a la font d'àudio Icecast (i DarkIce) | `hackme` |
 | `ICECAST_ADMIN_PASSWORD` | Contrasenya d'administració d'Icecast2 | `hackme` |
 | `ICECAST_RELAY_PASSWORD` | Contrasenya de relay d'Icecast2 | Hereta d'`ICECAST_SOURCE_PASSWORD` |

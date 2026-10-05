@@ -9,8 +9,8 @@ import threading
 import time
 from urllib.parse import urlparse
 
-PORT = 80
-TURNTABLE_MAC = "AD:60:17:9B:D5:AC"
+PORT = int(os.environ.get("PORT", "8080"))
+TURNTABLE_MAC = os.environ.get("TURNTABLE_MAC", "AD:60:17:9B:D5:AC")
 
 def run_cmd(cmd, timeout=5):
     try:
@@ -19,9 +19,24 @@ def run_cmd(cmd, timeout=5):
     except Exception:
         return ""
 
+def restart_darkice():
+    run_cmd("pkill -f darkice || true")
+    time.sleep(1)
+    run_cmd("darkice -c /etc/darkice.cfg >/dev/null 2>&1 &")
+
 def get_service_status(svc_name):
-    out = run_cmd(f"systemctl is-active {svc_name}")
-    return out if out else "inactive"
+    patterns = {
+        "icecast2": "icecast2",
+        "darkice": "darkice",
+        "bt-agent": "bt-agent",
+        "bt_agent": "bt-agent",
+        "bt-turntable-autoconnect": "bt-turntable",
+        "bt_autoconnect": "bt-turntable",
+        "pulseaudio": "pulseaudio",
+    }
+    pat = patterns.get(svc_name, svc_name)
+    out = run_cmd(f"pgrep -f '{pat}'")
+    return "active" if out else "inactive"
 
 def get_pulse_status():
     out = run_cmd("pgrep -x pulseaudio")
@@ -59,6 +74,8 @@ def get_bluetooth_status():
     }
 
 def get_icecast_status():
+    icecast_host = os.environ.get("ICECAST_HOST", "")
+    mount_url = f"http://{icecast_host}:8000/sonos.mp3" if icecast_host else "/sonos.mp3"
     try:
         raw = run_cmd("curl -s http://127.0.0.1:8000/status-json.xsl", timeout=2)
         if raw:
@@ -66,29 +83,40 @@ def get_icecast_status():
             icestats = data.get("icestats", {})
             source = icestats.get("source")
             if isinstance(source, dict):
+                listen_url = source.get("listenurl") or mount_url
                 return {
                     "online": True,
-                    "mount": "http://192.168.1.39:8000/sonos.mp3",
+                    "mount": listen_url,
                     "listeners": source.get("listeners", 0),
                     "bitrate": source.get("bitrate", "256"),
                     "audio_format": source.get("server_name", "Raspberry Bridge")
                 }
             elif isinstance(source, list) and len(source) > 0:
                 s = source[0]
+                listen_url = s.get("listenurl") or mount_url
                 return {
                     "online": True,
-                    "mount": "http://192.168.1.39:8000/sonos.mp3",
+                    "mount": listen_url,
                     "listeners": s.get("listeners", 0),
                     "bitrate": s.get("bitrate", "256"),
                     "audio_format": s.get("server_name", "Raspberry Bridge")
                 }
     except Exception:
         pass
-    return {"online": False, "mount": "http://192.168.1.39:8000/sonos.mp3", "listeners": 0, "bitrate": 256}
+    return {"online": False, "mount": mount_url, "listeners": 0, "bitrate": 256}
 
 def get_system_status():
-    temp_raw = run_cmd("vcgencmd measure_temp")
-    temp = temp_raw.replace("temp=", "") if temp_raw else "N/A"
+    temp = "N/A"
+    if os.path.exists("/sys/class/thermal/thermal_zone0/temp"):
+        try:
+            with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+                temp_c = float(f.read().strip()) / 1000.0
+                temp = f"{temp_c:.1f}'C"
+        except Exception:
+            pass
+    if temp == "N/A":
+        temp_raw = run_cmd("vcgencmd measure_temp")
+        temp = temp_raw.replace("temp=", "") if temp_raw else "N/A"
     
     uptime = run_cmd("uptime -p")
     
@@ -143,7 +171,7 @@ def start_pairing_mode():
         run_cmd(f"bluetoothctl pair {TURNTABLE_MAC}")
         run_cmd(f"bluetoothctl connect {TURNTABLE_MAC}")
         time.sleep(2)
-        run_cmd("systemctl restart darkice")
+        restart_darkice()
     t = threading.Thread(target=_pair, daemon=True)
     t.start()
 
@@ -151,7 +179,7 @@ def trigger_connect():
     def _conn():
         run_cmd(f"bluetoothctl connect {TURNTABLE_MAC}")
         time.sleep(2)
-        run_cmd("systemctl restart darkice")
+        restart_darkice()
     t = threading.Thread(target=_conn, daemon=True)
     t.start()
 
@@ -1048,11 +1076,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
                 <div class="audio-container">
                     <audio id="audio-player" controls preload="none" aria-label="Reproductor d'àudio del tocadiscos">
-                        <source src="http://192.168.1.39:8000/sonos.mp3" type="audio/mpeg">
+                        <source src="" type="audio/mpeg">
                         El teu navegador no és compatible amb la reproducció HTML5.
                     </audio>
                     <div class="stream-meta-row">
-                        <span>Enllaç: <a class="stream-url" href="http://192.168.1.39:8000/sonos.mp3" target="_blank" rel="noopener">http://192.168.1.39:8000/sonos.mp3</a></span>
+                        <span>Enllaç: <a class="stream-url" href="#" target="_blank" rel="noopener">Carregant flux...</a></span>
                         <span>Oients: <strong id="listener-count">0</strong> | Bitrate: <strong id="bitrate-display">256</strong> kbps</span>
                     </div>
                 </div>
@@ -1212,6 +1240,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 document.getElementById('listener-count').innerText = ice.listeners ?? 0;
                 document.getElementById('bitrate-display').innerText = ice.bitrate ?? 256;
 
+                const defaultStream = `${window.location.protocol}//${window.location.hostname}:8000/sonos.mp3`;
+                const streamUrl = (ice.mount && !ice.mount.startsWith('/')) ? ice.mount : (ice.mount ? `${window.location.protocol}//${window.location.hostname}:8000${ice.mount}` : defaultStream);
+                document.querySelectorAll('.stream-url').forEach(el => {
+                    el.href = streamUrl;
+                    el.innerText = streamUrl;
+                });
+                const audioPlayer = document.getElementById('audio-player');
+                const audioSource = audioPlayer ? audioPlayer.querySelector('source') : null;
+                if (audioSource && audioSource.src !== streamUrl) {
+                    audioSource.src = streamUrl;
+                    audioPlayer.load();
+                }
+
                 // Services
                 const svc = data.services || {};
                 setServiceTag('pill-darkice', svc.darkice);
@@ -1285,7 +1326,7 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
             trigger_disconnect()
             response_data["message"] = "Tocadiscos desconnectat"
         elif path == "/api/restart-stream":
-            run_cmd("systemctl restart darkice")
+            restart_darkice()
             response_data["message"] = "DarkIce reiniciat correctament"
         else:
             self.send_response(404)

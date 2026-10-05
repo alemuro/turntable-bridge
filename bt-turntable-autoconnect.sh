@@ -1,5 +1,5 @@
 #!/bin/bash
-DEVICE_MAC="AD:60:17:9B:D5:AC"
+DEVICE_MAC="${TURNTABLE_MAC:-AD:60:17:9B:D5:AC}"
 
 echo "Starting Bluetooth autoconnect daemon for $DEVICE_MAC..."
 
@@ -27,7 +27,9 @@ while true; do
                 pactl set-default-source "$BT_SOURCE" 2>/dev/null
                 echo "[$(date)] Set default source to $BT_SOURCE"
             fi
-            systemctl restart darkice
+            pkill -f darkice || true
+            sleep 1
+            darkice -c /etc/darkice.cfg >/dev/null 2>&1 &
         fi
         sleep 4
     else
