@@ -7,7 +7,7 @@
 - **Bluetooth Stack**: BlueZ (`bluetoothd`) + `bt-agent` (NoInputNoOutput) + `bt-turntable-autoconnect.sh`
 - **Audio Routing**: PulseAudio (`module-switch-on-connect`, `module-bluez5-device`)
 - **Streaming Engine**: DarkIce (MP3 live encoder 256kbps) -> Icecast2 (HTTP audio mountpoint on port 8000)
-- **Control API & UI**: Python 3 HTTP server (`phonos-status-api.py`) on port 80 with Swagger UI (`/docs`), OpenAPI 3.0 (`/openapi.json`), REST endpoints (`/api`), and real-time accessible web dashboard (`/`).
+- **Control API & UI**: Python 3 HTTP server (`phonos-status-api.py`) on port 8080 with Swagger UI (`/docs`), OpenAPI 3.0 (`/openapi.json`), REST endpoints (`/api`), Home Assistant/Sonos cast integration (`/api/sonos/play`, `/api/sonos/stop`), and real-time accessible web dashboard (`/`).
 
 ## Key Files
 - `Dockerfile`: Debian Trixie container containing BlueZ, PulseAudio, DarkIce, Icecast2, and Python API.

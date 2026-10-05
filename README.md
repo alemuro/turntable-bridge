@@ -7,9 +7,11 @@
 ## 🚀 Característiques
 
 - **Emparellament i Reconnexió Automàtica**: Detecta quan el tocadiscos s'encén i s'hi connecta immediatament sense intervenció.
-- **Emissió en Directe d'Alta Qualitat**: Codificació MP3 256kbps a `http://<ip>:8000/sonos.mp3`.
+- **Emissió en Directe d'Alta Qualitat**: Codificació MP3 256kbps disponible directament a `http://<ip>:8080/sonos.mp3` mitjançant proxy intern.
+- **Port Únic per a Tot (8080)**: Interfície web, API REST, Swagger i reproducció d'àudio unificats sota un sol port per facilitar Ingress/Homelab.
 - **Panell de Control & Dashboard Web**: Interfície moderna i accessible a `http://<ip>:8080/` amb estat en temps real i animació de vinil.
 - **API REST & Swagger UI**: Documentació interactiva OpenAPI a `http://<ip>:8080/docs` i endpoints de control a `/api`.
+- **Integració amb Sonos & Home Assistant**: Botons "Enviar a Sonos" i "Aturar Sonos" integrats.
 - **Empaquetat per a Docker & Homelab**: Llesta per desplegar amb `docker compose`.
 
 ---
@@ -100,7 +102,7 @@ spec:
 ```
 
 > [!NOTE]
-> Com que s'utilitza `hostNetwork: true`, els ports 8080 (API i Dashboard Web) i 8000 (Stream Icecast) s'exposen directament a la IP del node del clúster (sense entrar en conflicte amb el port 80 del reverse proxy/Ingress).
+> Com que l'aplicació fa proxy intern del flux Icecast, **només cal exposar el port 8080** (interfície web, API i stream d'àudio a `/sonos.mp3`). El port 8000 queda exclusivament per a la comunicació interna entre DarkIce i Icecast.
 
 ---
 
@@ -115,8 +117,10 @@ spec:
 | `ICECAST_ADMIN_PASSWORD` | Contrasenya d'administració d'Icecast2 | `hackme` |
 | `ICECAST_RELAY_PASSWORD` | Contrasenya de relay d'Icecast2 | Hereta d'`ICECAST_SOURCE_PASSWORD` |
 | `ICECAST_ADMIN_USER` | Usuari administrador d'Icecast2 | `admin` |
-
-
+| `HASS_URL` | URL base de Home Assistant | `http://homeassistant.local:8123` |
+| `HASS_TOKEN` | Long-Lived Access Token de Home Assistant | _Buit_ |
+| `SONOS_ENTITY_ID` | Entity ID del reproductor Sonos a Home Assistant | `media_player.menjador_sonos_2` |
+| `SONOS_STREAM_URL` | URL de l'stream accessible des de Sonos | `http://192.168.1.39:8080/sonos.mp3` |
 
 ---
 
@@ -127,11 +131,14 @@ spec:
 | `GET` | `/` | Panell de control web interactiu |
 | `GET` | `/docs` | Documentació interactiva Swagger UI |
 | `GET` | `/openapi.json` | Especificació OpenAPI 3.0 en JSON |
-| `GET` | `/api` | Estat complet del sistema (JSON) |
+| `GET` | `/api` | Estat complet del sistema (JSON) incloent integració Sonos |
+| `GET` | `/sonos.mp3` | Flux d'àudio en directe MP3 (Proxy d'Icecast) |
 | `POST` | `/api/connect` | Força la connexió amb el tocadiscos |
 | `POST` | `/api/pair` | Activa el mode emparellament i escaneig (30s) |
 | `POST` | `/api/disconnect` | Desconnecta el tocadiscos Bluetooth |
 | `POST` | `/api/restart-stream` | Reinicia el flux d'àudio DarkIce |
+| `POST` | `/api/sonos/play` | Envia l'stream a la barra Sonos via Home Assistant |
+| `POST` | `/api/sonos/stop` | Atura la reproducció a Sonos via Home Assistant |
 
 ---
 
