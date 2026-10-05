@@ -63,7 +63,7 @@ spec:
       #   kubernetes.io/hostname: "nom-del-node-bluetooth"
       containers:
         - name: turntable-bridge
-          image: ghcr.io/<usuari>/turntable-bridge:latest
+          image: ghcr.io/alemuro/turntable-bridge:latest
           imagePullPolicy: IfNotPresent
           securityContext:
             privileged: true
@@ -135,6 +135,8 @@ spec:
 
 ```text
 turntable-bridge/
+├── .github/workflows/
+│   └── build.yml               # CI/CD: Multi-arch Docker build & push a GHCR
 ├── Dockerfile                  # Imatge Docker amb Debian Trixie + Audio + BT
 ├── docker-compose.yml          # Desplegament amb mode host i D-Bus
 ├── entrypoint.sh               # Supervisor de processos del contenidor

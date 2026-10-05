@@ -1,0 +1,116 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.tagging.outputs.new_tag }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for existing tags
+        id: tags
+        run: |
+          if git tag -l 'v*' | grep -q .; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version (initial)
+        if: steps.tags.outputs.exists == 'false'
+        id: tag_initial
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          custom_tag: 1.0.0
+
+      - name: Bump version (auto)
+        if: steps.tags.outputs.exists == 'true'
+        id: tag_auto
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch
+          tag_prefix: v
+
+      - name: Set output
+        id: tagging
+        run: |
+          echo "new_tag=${{ steps.tag_initial.outputs.new_tag || steps.tag_auto.outputs.new_tag }}" >> $GITHUB_OUTPUT
+
+  build:
+    needs: [version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+            type=semver,pattern={{version}},value=${{ needs.version.outputs.new_tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.version.outputs.new_tag }}
+            type=semver,pattern={{major}},value=${{ needs.version.outputs.new_tag }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Prune old package versions
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          package-name: ${{ github.event.repository.name }}
+          package-type: container
+          min-versions-to-keep: 5
+          delete-only-untagged-versions: false
