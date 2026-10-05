@@ -40,9 +40,9 @@ echo "[+] Icecast2 running on port 8000"
 
 # 2. Start PulseAudio daemon
 pulseaudio --start --exit-idle-time=-1 --system=false
-pactl load-module module-switch-on-connect || true
-pactl load-module module-bluetooth-discover || true
-pactl load-module module-bluetooth-policy || true
+pactl load-module module-switch-on-connect >/dev/null 2>&1 || true
+pactl load-module module-bluetooth-discover >/dev/null 2>&1 || true
+pactl load-module module-bluetooth-policy >/dev/null 2>&1 || true
 echo "[+] PulseAudio initialized"
 
 # 3. Start Bluetooth agent and autoconnect daemon if D-Bus socket is available
