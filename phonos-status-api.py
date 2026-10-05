@@ -7,10 +7,16 @@ import socketserver
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from urllib.parse import urlparse
 
 PORT = int(os.environ.get("PORT", "8080"))
 TURNTABLE_MAC = os.environ.get("TURNTABLE_MAC", "AD:60:17:9B:D5:AC")
+HASS_URL = os.environ.get("HASS_URL", "http://homeassistant.local:8123").rstrip("/")
+HASS_TOKEN = os.environ.get("HASS_TOKEN", "")
+SONOS_ENTITY_ID = os.environ.get("SONOS_ENTITY_ID", "media_player.menjador_sonos_2")
+SONOS_STREAM_URL = os.environ.get("SONOS_STREAM_URL", "http://192.168.1.39:8080/sonos.mp3")
 
 def run_cmd(cmd, timeout=5):
     try:
@@ -74,32 +80,26 @@ def get_bluetooth_status():
     }
 
 def get_icecast_status():
-    icecast_host = os.environ.get("ICECAST_HOST", "")
-    mount_url = f"http://{icecast_host}:8000/sonos.mp3" if icecast_host else "/sonos.mp3"
+    mount_url = "/sonos.mp3"
     try:
         raw = run_cmd("curl -s http://127.0.0.1:8000/status-json.xsl", timeout=2)
         if raw:
             data = json.loads(raw)
             icestats = data.get("icestats", {})
             source = icestats.get("source")
+            src_obj = None
             if isinstance(source, dict):
-                listen_url = source.get("listenurl") or mount_url
-                return {
-                    "online": True,
-                    "mount": listen_url,
-                    "listeners": source.get("listeners", 0),
-                    "bitrate": source.get("bitrate", "256"),
-                    "audio_format": source.get("server_name", "Raspberry Bridge")
-                }
+                src_obj = source
             elif isinstance(source, list) and len(source) > 0:
-                s = source[0]
-                listen_url = s.get("listenurl") or mount_url
+                src_obj = source[0]
+
+            if src_obj:
                 return {
                     "online": True,
-                    "mount": listen_url,
-                    "listeners": s.get("listeners", 0),
-                    "bitrate": s.get("bitrate", "256"),
-                    "audio_format": s.get("server_name", "Raspberry Bridge")
+                    "mount": mount_url,
+                    "listeners": src_obj.get("listeners", 0),
+                    "bitrate": src_obj.get("bitrate", "256"),
+                    "audio_format": src_obj.get("server_name", "Raspberry Bridge")
                 }
     except Exception:
         pass
@@ -145,6 +145,60 @@ def get_system_status():
         "memory": mem
     }
 
+def call_ha_service(domain, service, data):
+    if not HASS_URL:
+        return False, "HASS_URL no està configurat a les variables d'entorn"
+    if not HASS_TOKEN:
+        return False, "Falta HASS_TOKEN (crea un Long-Lived Access Token a Home Assistant)"
+
+    url = f"{HASS_URL}/api/services/{domain}/{service}"
+    payload = json.dumps(data).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {HASS_TOKEN}",
+            "Content-Type": "application/json",
+        },
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return True, "Ordre enviada a Home Assistant correctament"
+    except urllib.error.HTTPError as e:
+        err_msg = f"Home Assistant ha retornat error HTTP {e.code}"
+        try:
+            raw = e.read().decode("utf-8")
+            if raw:
+                err_msg += f": {raw}"
+        except Exception:
+            pass
+        return False, err_msg
+    except urllib.error.URLError as e:
+        return False, f"No s'ha pogut connectar amb Home Assistant ({e.reason})"
+    except Exception as e:
+        return False, f"Error en comunicar amb Home Assistant: {e}"
+
+def sonos_play():
+    payload = {
+        "entity_id": SONOS_ENTITY_ID,
+        "media_content_id": SONOS_STREAM_URL,
+        "media_content_type": "music"
+    }
+    ok, msg = call_ha_service("media_player", "play_media", payload)
+    if ok:
+        return {"status": "ok", "message": f"Reproduint a {SONOS_ENTITY_ID}"}
+    return {"status": "error", "message": msg}
+
+def sonos_stop():
+    payload = {
+        "entity_id": SONOS_ENTITY_ID
+    }
+    ok, msg = call_ha_service("media_player", "media_stop", payload)
+    if ok:
+        return {"status": "ok", "message": f"Reproducció aturada a {SONOS_ENTITY_ID}"}
+    return {"status": "error", "message": msg}
+
 def get_full_status():
     return {
         "status": "ok",
@@ -158,6 +212,12 @@ def get_full_status():
             "pulseaudio": get_pulse_status()
         },
         "icecast": get_icecast_status(),
+        "sonos": {
+            "entity_id": SONOS_ENTITY_ID,
+            "stream_url": SONOS_STREAM_URL,
+            "configured": bool(HASS_URL and HASS_TOKEN),
+            "ha_url": HASS_URL
+        },
         "system": get_system_status()
     }
 
@@ -248,13 +308,22 @@ OPENAPI_SPEC = {
                                                 "pulseaudio": {"type": "string", "example": "active"}
                                             }
                                         },
-                                        "icecast": {
+                                         "icecast": {
                                             "type": "object",
                                             "properties": {
                                                 "online": {"type": "boolean", "example": True},
                                                 "mount": {"type": "string", "example": "http://192.168.1.39:8000/sonos.mp3"},
                                                 "listeners": {"type": "integer", "example": 1},
                                                 "bitrate": {"type": "integer", "example": 256}
+                                            }
+                                        },
+                                        "sonos": {
+                                            "type": "object",
+                                            "properties": {
+                                                "entity_id": {"type": "string", "example": "media_player.menjador_sonos_2"},
+                                                "stream_url": {"type": "string", "example": "http://192.168.1.39:8000/sonos.mp3"},
+                                                "configured": {"type": "boolean", "example": True},
+                                                "ha_url": {"type": "string", "example": "http://homeassistant.local:8123"}
                                             }
                                         },
                                         "system": {
@@ -357,6 +426,72 @@ OPENAPI_SPEC = {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        },
+        "/api/sonos/play": {
+            "post": {
+                "summary": "Enviar stream d'àudio a la barra Sonos",
+                "description": "Crida el servei media_player.play_media a Home Assistant per reproduir el flux Icecast a la barra Sonos.",
+                "responses": {
+                    "200": {
+                        "description": "Ordre enviada a Home Assistant",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "status": {"type": "string", "example": "ok"},
+                                        "message": {"type": "string", "example": "Reproduint a media_player.menjador_sonos_2"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sonos/stop": {
+            "post": {
+                "summary": "Aturar reproducció a la barra Sonos",
+                "description": "Crida el servei media_player.media_stop a Home Assistant per aturar la reproducció a la barra Sonos.",
+                "responses": {
+                    "200": {
+                        "description": "Ordre d'aturada enviada a Home Assistant",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "status": {"type": "string", "example": "ok"},
+                                        "message": {"type": "string", "example": "Reproducció aturada a media_player.menjador_sonos_2"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/sonos.mp3": {
+            "get": {
+                "summary": "Flux d'àudio en directe (Proxy MP3)",
+                "description": "Proxy d'àudio en temps real que transmet el flux Icecast (MP3 256kbps) directament pel port 8080 de l'aplicació.",
+                "responses": {
+                    "200": {
+                        "description": "Flux d'àudio MP3 continu",
+                        "content": {
+                            "audio/mpeg": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Flux d'àudio no disponible temporalment"
                     }
                 }
             }
@@ -831,6 +966,53 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         .stream-url:hover { text-decoration: underline; }
         .stream-url:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: 4px; }
 
+        /* Sonos Controls */
+        .sonos-row {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .sonos-meta {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .sonos-btn-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .btn-sonos-play {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: #ffffff;
+            border-color: rgba(16, 185, 129, 0.4);
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+        }
+        .btn-sonos-play:hover {
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+        }
+
+        .btn-sonos-stop {
+            background: var(--bg-surface-elevated);
+            border-color: var(--border-strong);
+            color: var(--rose-text);
+        }
+        .btn-sonos-stop:hover {
+            background: rgba(244, 63, 94, 0.15);
+            border-color: var(--rose-border);
+        }
+
         /* Metric Grid */
         .dual-grid {
             display: grid;
@@ -1083,6 +1265,23 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         <span>Enllaç: <a class="stream-url" href="#" target="_blank" rel="noopener">Carregant flux...</a></span>
                         <span>Oients: <strong id="listener-count">0</strong> | Bitrate: <strong id="bitrate-display">256</strong> kbps</span>
                     </div>
+                    <div class="sonos-row">
+                        <div class="sonos-meta">
+                            <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="2" width="16" height="20" rx="2"></rect><circle cx="12" cy="14" r="4"></circle><line x1="12" y1="6" x2="12.01" y2="6"></line></svg>
+                            <span>Barra Sonos: <strong id="sonos-entity-text">media_player.menjador_sonos_2</strong></span>
+                            <span class="state-tag inactive" id="sonos-config-tag" style="margin-left:4px;">No configurat</span>
+                        </div>
+                        <div class="sonos-btn-group">
+                            <button type="button" class="btn-sonos-play" onclick="executePost('/api/sonos/play', 'Enviant àudio a la barra Sonos...')">
+                                <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                                Enviar a Sonos
+                            </button>
+                            <button type="button" class="btn-sonos-stop" onclick="executePost('/api/sonos/stop', 'Aturant reproducció a Sonos...')">
+                                <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12"></rect></svg>
+                                Aturar Sonos
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -1240,8 +1439,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 document.getElementById('listener-count').innerText = ice.listeners ?? 0;
                 document.getElementById('bitrate-display').innerText = ice.bitrate ?? 256;
 
-                const defaultStream = `${window.location.protocol}//${window.location.hostname}:8000/sonos.mp3`;
-                const streamUrl = (ice.mount && !ice.mount.startsWith('/')) ? ice.mount : (ice.mount ? `${window.location.protocol}//${window.location.hostname}:8000${ice.mount}` : defaultStream);
+                const streamUrl = `${window.location.protocol}//${window.location.host}/sonos.mp3`;
                 document.querySelectorAll('.stream-url').forEach(el => {
                     el.href = streamUrl;
                     el.innerText = streamUrl;
@@ -1251,6 +1449,23 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 if (audioSource && audioSource.src !== streamUrl) {
                     audioSource.src = streamUrl;
                     audioPlayer.load();
+                }
+
+                // Sonos Status
+                const sonos = data.sonos || {};
+                const sonosEntityEl = document.getElementById('sonos-entity-text');
+                const sonosTagEl = document.getElementById('sonos-config-tag');
+                if (sonosEntityEl && sonos.entity_id) {
+                    sonosEntityEl.innerText = sonos.entity_id;
+                }
+                if (sonosTagEl) {
+                    if (sonos.configured) {
+                        sonosTagEl.className = 'state-tag active';
+                        sonosTagEl.innerText = 'Actiu (HA)';
+                    } else {
+                        sonosTagEl.className = 'state-tag inactive';
+                        sonosTagEl.innerText = 'Falta HASS_TOKEN';
+                    }
                 }
 
                 // Services
@@ -1299,6 +1514,16 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
 class StatusHandler(http.server.BaseHTTPRequestHandler):
     def do_HEAD(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path in ("/sonos.mp3", "/stream"):
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.end_headers()
@@ -1328,6 +1553,10 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/restart-stream":
             restart_darkice()
             response_data["message"] = "DarkIce reiniciat correctament"
+        elif path == "/api/sonos/play" or path == "/api/sonos/cast":
+            response_data = sonos_play()
+        elif path == "/api/sonos/stop":
+            response_data = sonos_stop()
         else:
             self.send_response(404)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1346,6 +1575,40 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
+
+        # Live Audio Streaming Proxy (Icecast /sonos.mp3)
+        if path in ("/sonos.mp3", "/stream"):
+            try:
+                upstream_req = urllib.request.Request(
+                    "http://127.0.0.1:8000/sonos.mp3",
+                    headers={"User-Agent": self.headers.get("User-Agent", "PhonosProxy/1.0")}
+                )
+                with urllib.request.urlopen(upstream_req, timeout=10) as upstream:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "audio/mpeg")
+                    self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+
+                    while True:
+                        chunk = upstream.read(8192)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except Exception as e:
+                try:
+                    self.send_response(503)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(f"Flux d'àudio Icecast temporalment no disponible ({e})\n".encode("utf-8"))
+                except Exception:
+                    pass
+            return
         
         # OpenAPI Schema
         if path == "/openapi.json" or path == "/swagger.json":
@@ -1392,7 +1655,10 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+class ThreadedHTTPServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
 if __name__ == "__main__":
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("", PORT), StatusHandler) as httpd:
+    with ThreadedHTTPServer(("", PORT), StatusHandler) as httpd:
         httpd.serve_forever()

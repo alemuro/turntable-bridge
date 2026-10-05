@@ -14,3 +14,7 @@ services:
       - TURNTABLE_MAC=AD:60:17:9B:D5:AC
       - ICECAST_SOURCE_PASSWORD=${ICECAST_SOURCE_PASSWORD:-hackme}
       - ICECAST_ADMIN_PASSWORD=${ICECAST_ADMIN_PASSWORD:-hackme}
+      - HASS_URL=${HASS_URL:-http://homeassistant.local:8123}
+      - HASS_TOKEN=${HASS_TOKEN:-}
+      - SONOS_ENTITY_ID=${SONOS_ENTITY_ID:-media_player.menjador_sonos_2}
+      - SONOS_STREAM_URL=${SONOS_STREAM_URL:-http://192.168.1.39:8080/sonos.mp3}
